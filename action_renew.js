@@ -289,6 +289,30 @@ async function detectNotYetRenewable(page) {
     return null;
 }
 
+
+async function detectRenewBlockingState(page) {
+    const text = await page.evaluate(() => document.body.innerText || "").catch(() => "");
+    const compact = text.replace(/\s+/g, " ").trim();
+
+    const notReady = compact.match(/You can't renew your server yet.{0,180}?day\(s\)\.?/i);
+    if (notReady) {
+        return { type: "not_ready", message: notReady[0].trim() };
+    }
+    if (/You can't renew your server yet/i.test(compact) || /You will be able to as of/i.test(compact)) {
+        return { type: "not_ready", message: "You can't renew your server yet" };
+    }
+
+    if (/Please complete the captcha to continue/i.test(compact)) {
+        return { type: "captcha_required", message: "Please complete the captcha to continue" };
+    }
+
+    if (/Protected by ALTCHA/i.test(compact) || /I'm not a robot/i.test(compact)) {
+        return { type: "altcha_visible", message: "ALTCHA captcha is visible and still unresolved" };
+    }
+
+    return null;
+}
+
 async function ensureScreenshotsDir() {
     const photoDir = path.join(process.cwd(), 'screenshots');
     if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
@@ -478,38 +502,38 @@ async function findRenewModal(page) {
                             break;
                         }
 
-                        // 错误检查与结果判断
-                        let hasCaptchaError = false;
+                        // 错误检查与结果判断：这里不再把业务阻断/验证码阻断误判成“模态框未关闭”。
+                        // 说明：原来的 solveTurnstileIfPresent 仍然保留；这里只负责识别页面返回的阻断状态并停止重复刷新。
+                        let blockingState = null;
                         try {
                             const startVerifyTime = Date.now();
-                            while (Date.now() - startVerifyTime < 3000) {
-                                if (await page.getByText('Please complete the captcha to continue').isVisible()) {
-                                    console.log('   >> ⚠️ 错误: "Please complete the captcha".');
-                                    hasCaptchaError = true;
-                                    break;
-                                }
-                                const notTimeLoc = page.getByText("You can't renew your server yet");
-                                if (await notTimeLoc.isVisible()) {
-                                    console.log(`   >> ⏳ 暂无法续期 (还没到时间)。`);
-                                    renewSuccess = true; // 视为完成
-                                    // ...截图与TG发送逻辑...
-                                    try { 
-                                        const closeBtn = modal.getByLabel('Close'); 
-                                        if (await closeBtn.isVisible()) await closeBtn.click(); 
-                                    } catch(e){}
-                                    break;
-                                }
-                                await page.waitForTimeout(200);
+                            while (Date.now() - startVerifyTime < 5000) {
+                                blockingState = await detectRenewBlockingState(page);
+                                if (blockingState) break;
+                                await page.waitForTimeout(250);
                             }
                         } catch (e) { }
 
-                        if (renewSuccess) break;
-
-                        if (hasCaptchaError) {
-                            console.log('   >> 验证码未通过，刷新页面重试...');
-                            await page.reload();
-                            await page.waitForTimeout(3000);
-                            continue;
+                        if (blockingState) {
+                            if (blockingState.type === 'not_ready') {
+                                console.log('   >> ⏳ 暂无法续期，停止重试。');
+                            } else if (blockingState.type === 'captcha_required') {
+                                console.log('   >> ⚠️ 续期被验证码阻断，停止重试。');
+                            } else if (blockingState.type === 'altcha_visible') {
+                                console.log('   >> ⚠️ 检测到 ALTCHA 验证仍未完成，停止重试。');
+                            } else {
+                                console.log('   >> ⚠️ 检测到续期阻断状态，停止重试。');
+                            }
+                            console.log('   >> 页面提示:', blockingState.message);
+                            try {
+                                const photoDir = await ensureScreenshotsDir();
+                                await page.screenshot({
+                                    path: path.join(photoDir, `renew_blocked_${blockingState.type}_${attempt}.png`),
+                                    fullPage: true
+                                });
+                            } catch (e) { }
+                            renewSuccess = true;
+                            break;
                         }
 
                         // 检查成功
@@ -520,7 +544,22 @@ async function findRenewModal(page) {
                             renewSuccess = true;
                             break;
                         } else {
-                            console.log('   >> 模态框未关闭，刷新重试...');
+                            const blockingStateLate = await detectRenewBlockingState(page).catch(() => null);
+                            if (blockingStateLate) {
+                                console.log('   >> ⚠️ 模态框未关闭，但已检测到明确阻断状态，停止重试。');
+                                console.log('   >> 页面提示:', blockingStateLate.message);
+                                try {
+                                    const photoDir = await ensureScreenshotsDir();
+                                    await page.screenshot({
+                                        path: path.join(photoDir, `renew_modal_still_open_${blockingStateLate.type}_${attempt}.png`),
+                                        fullPage: true
+                                    });
+                                } catch (e) { }
+                                renewSuccess = true;
+                                break;
+                            }
+
+                            console.log('   >> 模态框未关闭，未检测到明确错误；刷新重试...');
                             await page.reload();
                             await page.waitForTimeout(3000);
                             continue;
