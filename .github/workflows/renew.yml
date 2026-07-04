@@ -1,4 +1,31 @@
-- name: Webshare Proxy Fetch
+name: Katabump Auto Renew
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+          npm install
+          # 一键安装 chromium 浏览器内核及其所需的系统底层依赖
+          npx playwright install chromium --with-deps
+
+      - name: Webshare Proxy Fetch
         env:
           WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
         run: |
@@ -11,10 +38,9 @@
 
           echo "Fetching Webshare proxy list..."
 
-          # 修复：URL 末尾加上了 &mode=direct 满足 Webshare 官方的必填项要求
           RESPONSE=$(curl -sSL \
             -H "Authorization: Token ${WEBSHARE_API_KEY}" \
-            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10&mode=direct")
+            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10")
 
           if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
             echo "❌ Webshare API Error Response:"
@@ -26,8 +52,7 @@
           PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
 
           if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
-            echo "❌ ERROR: No proxy found in Webshare response. Full response below:"
-            echo "$RESPONSE"
+            echo "❌ ERROR: No proxy found in Webshare response."
             exit 1
           fi
 
@@ -46,3 +71,32 @@
           echo "HTTPS_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
 
           echo "Selected Webshare proxy: ${IP}:${PORT}"
+
+      - name: Check proxy IP
+        run: |
+          echo "Direct IP:"
+          curl --noproxy '*' -s https://api.ipify.org || true
+          echo -e "\n"
+
+          echo "Proxy IP:"
+          curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
+          echo -e "\n"
+
+      - name: Run Renew Script
+        env:
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          mkdir -p screenshots
+          # 移除了 xvfb-run（默认 Playwright 无头模式不需要）
+          # 移除了 || echo，确保脚本失败时能正确触发 GitHub 警报
+          node action_renew.js
+
+      - name: Upload Screenshots
+        if: always() # 确保即使上面的脚本报错了，截图依然能上传供你排查
+        uses: actions/upload-artifact@v5
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
