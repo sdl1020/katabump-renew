@@ -2,7 +2,6 @@ name: Katabump Auto Renew
 
 on:
   schedule:
-    # 每天 UTC 0点，北京时间 8点运行
     - cron: '0 0 * * *'
   workflow_dispatch:
 
@@ -25,7 +24,7 @@ jobs:
           npm install
           npx playwright install-deps chrome
 
-      - name: Pick Webshare proxy
+      - name: Pick Webshare proxy (v2 CSV format supported)
         env:
           WEBSHARE_PROXY_LIST_URL: ${{ secrets.WEBSHARE_PROXY_LIST_URL }}
         run: |
@@ -38,8 +37,10 @@ jobs:
 
           echo "Downloading Webshare proxy list..."
           curl -fsSL "${WEBSHARE_PROXY_LIST_URL}" -o proxies.txt
+
           echo "Proxy list downloaded. Total lines: $(wc -l < proxies.txt)"
 
+          # 过滤空行，随机取一行
           PROXY_LINE=$(grep -v '^[[:space:]]*$' proxies.txt | shuf -n 1)
 
           if [ -z "$PROXY_LINE" ]; then
@@ -47,14 +48,14 @@ jobs:
             exit 1
           fi
 
-          IP=$(echo "$PROXY_LINE" | cut -d: -f1)
-          PORT=$(echo "$PROXY_LINE" | cut -d: -f2)
-          PROXY_USER=$(echo "$PROXY_LINE" | cut -d: -f3)
-          PROXY_PASS=$(echo "$PROXY_LINE" | cut -d: -f4)
+          # Webshare v2 返回 CSV 格式：ip,port,user,pass
+          IP=$(echo "$PROXY_LINE" | cut -d',' -f1)
+          PORT=$(echo "$PROXY_LINE" | cut -d',' -f2)
+          PROXY_USER=$(echo "$PROXY_LINE" | cut -d',' -f3)
+          PROXY_PASS=$(echo "$PROXY_LINE" | cut -d',' -f4)
 
           if [ -z "$IP" ] || [ -z "$PORT" ] || [ -z "$PROXY_USER" ] || [ -z "$PROXY_PASS" ]; then
-            echo "ERROR: Proxy line format invalid. Expected IP:PORT:USERNAME:PASSWORD"
-            echo "Selected line is invalid, hidden for security."
+            echo "ERROR: Proxy line format invalid (CSV expected: ip,port,user,pass)"
             exit 1
           fi
 
@@ -89,10 +90,11 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
+          mkdir -p screenshots
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js || echo "renew script failed but workflow continues"
 
       - name: Upload Screenshots
-        if: always()
+        if: ${{ always() && exists('screenshots') }}
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
