@@ -1,30 +1,4 @@
-name: Katabump Auto Renew
-
-on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
-
-jobs:
-  renew:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb curl jq
-          npm install
-          npx playwright install-deps chrome
-
-      - name: Webshare Proxy Fetch
+- name: Webshare Proxy Fetch
         env:
           WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
         run: |
@@ -37,12 +11,11 @@ jobs:
 
           echo "Fetching Webshare proxy list..."
 
-          # 更换为官方长期维护的最稳妥 v2 API 接口
+          # 修复：URL 末尾加上了 &mode=direct 满足 Webshare 官方的必填项要求
           RESPONSE=$(curl -sSL \
             -H "Authorization: Token ${WEBSHARE_API_KEY}" \
-            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10")
+            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10&mode=direct")
 
-          # 检查 API 是否返回了错误信息
           if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
             echo "❌ Webshare API Error Response:"
             echo "$RESPONSE"
@@ -50,8 +23,6 @@ jobs:
           fi
 
           echo "$RESPONSE" > proxies.json
-
-          # 兼容 v2 版本的 JSON 数据结构解析
           PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
 
           if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
@@ -75,30 +46,3 @@ jobs:
           echo "HTTPS_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
 
           echo "Selected Webshare proxy: ${IP}:${PORT}"
-
-      - name: Check proxy IP
-        run: |
-          echo "Direct IP:"
-          curl --noproxy '*' -s https://api.ipify.org || true
-          echo -e "\n"
-
-          echo "Proxy IP:"
-          curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
-          echo -e "\n"
-
-      - name: Run Renew Script
-        env:
-          USERS_JSON: ${{ secrets.USERS_JSON }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: |
-          mkdir -p screenshots
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js || echo "renew script failed but workflow continues"
-
-      - name: Upload Screenshots
-        if: always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: screenshots
-          path: screenshots/
-          if-no-files-found: ignore
