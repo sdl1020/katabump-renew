@@ -22,7 +22,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl jq
           npm install
-          # 一键安装 chromium 浏览器内核及其所需的系统底层依赖
           npx playwright install chromium --with-deps
 
       - name: Webshare Proxy Fetch
@@ -40,7 +39,7 @@ jobs:
 
           RESPONSE=$(curl -sSL \
             -H "Authorization: Token ${WEBSHARE_API_KEY}" \
-            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10")
+            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10&mode=direct")
 
           if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
             echo "❌ Webshare API Error Response:"
@@ -52,7 +51,8 @@ jobs:
           PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
 
           if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
-            echo "❌ ERROR: No proxy found in Webshare response."
+            echo "❌ ERROR: No proxy found in Webshare response. Full response below:"
+            echo "$RESPONSE"
             exit 1
           fi
 
@@ -76,9 +76,7 @@ jobs:
         run: |
           echo "Direct IP:"
           curl --noproxy '*' -s https://api.ipify.org || true
-          echo -e "\n"
-
-          echo "Proxy IP:"
+          echo -e "\nProxy IP:"
           curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
           echo -e "\n"
 
@@ -89,12 +87,10 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           mkdir -p screenshots
-          # 移除了 xvfb-run（默认 Playwright 无头模式不需要）
-          # 移除了 || echo，确保脚本失败时能正确触发 GitHub 警报
           node action_renew.js
 
       - name: Upload Screenshots
-        if: always() # 确保即使上面的脚本报错了，截图依然能上传供你排查
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: screenshots
