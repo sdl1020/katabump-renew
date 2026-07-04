@@ -20,37 +20,33 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb curl
+          sudo apt-get install -y xvfb curl jq
           npm install
           npx playwright install-deps chrome
 
-      - name: Pick Webshare proxy (v2 CSV format supported)
+      - name: Fetch Webshare v3 Proxy
         env:
-          WEBSHARE_PROXY_LIST_URL: ${{ secrets.WEBSHARE_PROXY_LIST_URL }}
+          WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
         run: |
-          if [ -z "$WEBSHARE_PROXY_LIST_URL" ]; then
-            echo "WEBSHARE_PROXY_LIST_URL is empty, running without Webshare proxy."
+          if [ -z "$WEBSHARE_API_KEY" ]; then
+            echo "WEBSHARE_API_KEY is empty, running without proxy."
             echo "HTTP_PROXY=" >> "$GITHUB_ENV"
             echo "HTTPS_PROXY=" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          echo "Downloading Webshare proxy list..."
+          echo "Fetching Webshare v3 proxy list..."
 
-          curl -fsSL \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-            -H "Accept: text/csv,application/json;q=0.9,*/*;q=0.8" \
-            -H "Referer: https://proxy.webshare.io/" \
-            --compressed \
-            "${WEBSHARE_PROXY_LIST_URL}" \
-            -o proxies.txt
+          RESPONSE=$(curl -fsSL \
+            -H "Authorization: Bearer ${WEBSHARE_API_KEY}" \
+            "https://proxy.webshare.io/api/v3/proxy/list?mode=direct&limit=50")
 
-          echo "Proxy list downloaded. Total lines: $(wc -l < proxies.txt)"
+          echo "$RESPONSE" > proxies.json
 
-          PROXY_LINE=$(grep -v '^[[:space:]]*$' proxies.txt | shuf -n 1)
+          PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json)
 
           if [ -z "$PROXY_LINE" ]; then
-            echo "ERROR: No proxy found in Webshare proxy list."
+            echo "ERROR: No proxy found in Webshare v3 response."
             exit 1
           fi
 
@@ -58,11 +54,6 @@ jobs:
           PORT=$(echo "$PROXY_LINE" | cut -d',' -f2)
           PROXY_USER=$(echo "$PROXY_LINE" | cut -d',' -f3)
           PROXY_PASS=$(echo "$PROXY_LINE" | cut -d',' -f4)
-
-          if [ -z "$IP" ] || [ -z "$PORT" ] || [ -z "$PROXY_USER" ] || [ -z "$PROXY_PASS" ]; then
-            echo "ERROR: Proxy line format invalid (CSV expected: ip,port,user,pass)"
-            exit 1
-          fi
 
           HTTP_PROXY_VALUE="http://${PROXY_USER}:${PROXY_PASS}@${IP}:${PORT}"
 
@@ -73,7 +64,7 @@ jobs:
           echo "HTTP_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
           echo "HTTPS_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
 
-          echo "Selected Webshare proxy: ${IP}:${PORT}"
+          echo "Selected Webshare v3 proxy: ${IP}:${PORT}"
 
       - name: Check proxy IP
         run: |
@@ -81,13 +72,9 @@ jobs:
           curl --noproxy '*' -s https://api.ipify.org || true
           echo
 
-          if [ -n "$HTTP_PROXY" ]; then
-            echo "Proxy IP:"
-            curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
-            echo
-          else
-            echo "HTTP_PROXY is empty."
-          fi
+          echo "Proxy IP:"
+          curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
+          echo
 
       - name: Run Renew Script
         env:
