@@ -19,8 +19,11 @@ jobs:
 
       - name: Install Google Chrome and Dependencies
         run: |
-          echo "=== 1. 预先修复并配置正确的 Google Chrome 软件源 ==="
-          # 用最新规范的标准格式覆写配置文件，防止格式错乱
+          echo "=== 1. 预先导入 Google Chrome 官方公钥和配置软件源 ==="
+          # 必须先下载并导入安全公钥，否则之后的 apt-get update 会因为验证失败而报错
+          sudo wget -qO /etc/apt/trusted.gpg.d/google-chrome.asc https://dl.google.com/linux/linux_signing_key.pub
+          
+          # 用标准规范的格式覆写配置文件
           echo "deb [arch=amd64] https://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
 
           echo "=== 2. 更新系统并安装基础依赖 ==="
@@ -28,10 +31,7 @@ jobs:
           # 安装虚拟桌面环境 Xvfb 和工具
           sudo apt-get install -y xvfb curl jq
           
-          echo "=== 3. 稳妥安装官方 Google Chrome 稳定版 ==="
-          # 放弃已被淘汰的 apt-key，改用现代的签名验证方式
-          sudo wget -qO /etc/apt/trusted.gpg.d/google-chrome.asc https://dl.google.com/linux/linux_signing_key.pub
-          sudo apt-get update
+          echo "=== 3. 安装官方 Google Chrome 稳定版 ==="
           sudo apt-get install -y google-chrome-stable
           
           echo "=== 4. 安装项目 npm 依赖 ==="
