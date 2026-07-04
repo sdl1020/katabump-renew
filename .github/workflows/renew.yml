@@ -1,3 +1,29 @@
+name: Katabump Auto Renew
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb curl
+          npm install
+          npx playwright install-deps chrome
+
       - name: Pick Webshare proxy (v2 CSV format supported)
         env:
           WEBSHARE_PROXY_LIST_URL: ${{ secrets.WEBSHARE_PROXY_LIST_URL }}
@@ -48,3 +74,34 @@
           echo "HTTPS_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
 
           echo "Selected Webshare proxy: ${IP}:${PORT}"
+
+      - name: Check proxy IP
+        run: |
+          echo "Direct IP:"
+          curl --noproxy '*' -s https://api.ipify.org || true
+          echo
+
+          if [ -n "$HTTP_PROXY" ]; then
+            echo "Proxy IP:"
+            curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
+            echo
+          else
+            echo "HTTP_PROXY is empty."
+          fi
+
+      - name: Run Renew Script
+        env:
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          mkdir -p screenshots
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js || echo "renew script failed but workflow continues"
+
+      - name: Upload Screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: ignore
