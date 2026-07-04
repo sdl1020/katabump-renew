@@ -24,7 +24,7 @@ jobs:
           npm install
           npx playwright install-deps chrome
 
-      - name: Webshare v3 Proxy
+      - name: Webshare Proxy Fetch
         env:
           WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
         run: |
@@ -35,14 +35,14 @@ jobs:
             exit 0
           fi
 
-          echo "Fetching Webshare v3 proxy list..."
+          echo "Fetching Webshare proxy list..."
 
-          # 去掉了 -f 参数，防止 curl 直接报 22 错误崩溃
+          # 更换为官方长期维护的最稳妥 v2 API 接口
           RESPONSE=$(curl -sSL \
-            -H "Authorization: Bearer ${WEBSHARE_API_KEY}" \
-            "https://proxy.webshare.io/api/v3/proxy/list?mode=direct&limit=50")
+            -H "Authorization: Token ${WEBSHARE_API_KEY}" \
+            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10")
 
-          # 检查 API 是否返回了错误信息，如果是，打印出来以便排查
+          # 检查 API 是否返回了错误信息
           if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
             echo "❌ Webshare API Error Response:"
             echo "$RESPONSE"
@@ -51,10 +51,11 @@ jobs:
 
           echo "$RESPONSE" > proxies.json
 
+          # 兼容 v2 版本的 JSON 数据结构解析
           PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
 
           if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
-            echo "❌ ERROR: No proxy found in Webshare v3 response. Full response below:"
+            echo "❌ ERROR: No proxy found in Webshare response. Full response below:"
             echo "$RESPONSE"
             exit 1
           fi
@@ -73,7 +74,7 @@ jobs:
           echo "HTTP_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
           echo "HTTPS_PROXY=${HTTP_PROXY_VALUE}" >> "$GITHUB_ENV"
 
-          echo "Selected Webshare v3 proxy: ${IP}:${PORT}"
+          echo "Selected Webshare proxy: ${IP}:${PORT}"
 
       - name: Check proxy IP
         run: |
