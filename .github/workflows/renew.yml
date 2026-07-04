@@ -37,16 +37,25 @@ jobs:
 
           echo "Fetching Webshare v3 proxy list..."
 
-          RESPONSE=$(curl -fsSL \
+          # 去掉了 -f 参数，防止 curl 直接报 22 错误崩溃
+          RESPONSE=$(curl -sSL \
             -H "Authorization: Bearer ${WEBSHARE_API_KEY}" \
             "https://proxy.webshare.io/api/v3/proxy/list?mode=direct&limit=50")
 
+          # 检查 API 是否返回了错误信息，如果是，打印出来以便排查
+          if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
+            echo "❌ Webshare API Error Response:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
           echo "$RESPONSE" > proxies.json
 
-          PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json)
+          PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
 
-          if [ -z "$PROXY_LINE" ]; then
-            echo "ERROR: No proxy found in Webshare v3 response."
+          if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
+            echo "❌ ERROR: No proxy found in Webshare v3 response. Full response below:"
+            echo "$RESPONSE"
             exit 1
           fi
 
@@ -70,11 +79,11 @@ jobs:
         run: |
           echo "Direct IP:"
           curl --noproxy '*' -s https://api.ipify.org || true
-          echo
+          echo -e "\n"
 
           echo "Proxy IP:"
           curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
-          echo
+          echo -e "\n"
 
       - name: Run Renew Script
         env:
@@ -87,7 +96,7 @@ jobs:
 
       - name: Upload Screenshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: screenshots
           path: screenshots/
