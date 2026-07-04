@@ -17,12 +17,19 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install Dependencies
+      - name: Install Google Chrome and Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq
+          # 安装虚拟桌面环境 Xvfb 和工具
+          sudo apt-get install -y xvfb curl jq
+          
+          # 下载并安装真正的官方 Google Chrome 稳定版（解决路径 /usr/bin/google-chrome 找不到的问题）
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add - 
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/pub/stable/main" >> /etc/apt/sources.list.d/google-chrome.list'
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          
           npm install
-          npx playwright install chromium --with-deps
 
       - name: Webshare Proxy Fetch
         env:
@@ -87,7 +94,8 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           mkdir -p screenshots
-          node action_renew.js
+          # 重新启用并配置 xvfb-run 虚拟桌面，专门配合你的 launchChrome 逻辑
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
 
       - name: Upload Screenshots
         if: always()
