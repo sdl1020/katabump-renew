@@ -9,9 +9,17 @@ const http = require('http');
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
-// --- 辅助函数：发送 Telegram ---
+// --- 辅助函数：发送 Telegram (优化版) ---
 async function sendTelegramMessage(message, imagePath = null) {
-    if (!TG_BOT_TOKEN || !TG_CHAT_ID) return;
+    if (!process.env.TG_BOT_TOKEN || !process.env.TG_CHAT_ID) {
+        console.log('[Telegram] Skipping: Token or ChatID missing.');
+        return;
+    }
+
+    const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
+    const TG_CHAT_ID = process.env.TG_CHAT_ID;
+
+    // 1. 发送文字消息 (确保无论如何都能收到通知)
     try {
         const url = `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`;
         await axios.post(url, {
@@ -23,6 +31,8 @@ async function sendTelegramMessage(message, imagePath = null) {
     } catch (e) {
         console.error('[Telegram] Failed to send message:', e.message);
     }
+
+    // 2. 发送图片 (如果有截图)
     if (imagePath && fs.existsSync(imagePath)) {
         console.log('[Telegram] Sending photo...');
         const cmd = `curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendPhoto" -F chat_id="${TG_CHAT_ID}" -F photo="@${imagePath}"`;
@@ -33,6 +43,8 @@ async function sendTelegramMessage(message, imagePath = null) {
                 resolve();
             });
         });
+    } else {
+        console.log('[Telegram] No image to send or file not found.');
     }
 }
 
