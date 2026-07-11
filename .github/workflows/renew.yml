@@ -2,6 +2,7 @@ name: Katabump Auto Renew
 
 on:
   schedule:
+    # 每天 UTC 0点，北京时间 8点运行
     - cron: '0 0 * * *'
   workflow_dispatch:
 
@@ -10,69 +11,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      - name: Install Google Chrome and Dependencies
+      - name: Install Dependencies
         run: |
-          echo "=== 1. 预先导入 Google Chrome 官方公钥和配置软件源 ==="
-          # 必须先下载并导入安全公钥，否则之后的 apt-get update 会因为验证失败而报错
-          sudo wget -qO /etc/apt/trusted.gpg.d/google-chrome.asc https://dl.google.com/linux/linux_signing_key.pub
-          
-          # 用标准规范的格式覆写配置文件
-          echo "deb [arch=amd64] https://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-
-          echo "=== 2. 更新系统并安装基础依赖 ==="
           sudo apt-get update
-          # 安装虚拟桌面环境 Xvfb 和工具
-          sudo apt-get install -y xvfb curl jq
-          
-          echo "=== 3. 安装官方 Google Chrome 稳定版 ==="
-          sudo apt-get install -y google-chrome-stable
-          
-          echo "=== 4. 安装项目 npm 依赖 ==="
+          sudo apt-get install -y xvfb curl
           npm install
+          npx playwright install-deps chrome
 
-      - name: Webshare Proxy Fetch
+      - name: Pick Webshare proxy
         env:
-          WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
+          WEBSHARE_PROXY_LIST_URL: ${{ secrets.WEBSHARE_PROXY_LIST_URL }}
         run: |
-          if [ -z "$WEBSHARE_API_KEY" ]; then
-            echo "WEBSHARE_API_KEY is empty, running without proxy."
+          if [ -z "$WEBSHARE_PROXY_LIST_URL" ]; then
+            echo "WEBSHARE_PROXY_LIST_URL is empty, running without Webshare proxy."
             echo "HTTP_PROXY=" >> "$GITHUB_ENV"
             echo "HTTPS_PROXY=" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          echo "Fetching Webshare proxy list..."
+          echo "Downloading Webshare proxy list..."
+          curl -fsSL "${WEBSHARE_PROXY_LIST_URL}" -o proxies.txt
+          echo "Proxy list downloaded. Total lines: $(wc -l < proxies.txt)"
 
-          RESPONSE=$(curl -sSL \
-            -H "Authorization: Token ${WEBSHARE_API_KEY}" \
-            "https://proxy.webshare.io/api/v2/proxy/list/?page=1&page_size=10&mode=direct")
+          PROXY_LINE=$(grep -v '^[[:space:]]*$' proxies.txt | shuf -n 1)
 
-          if echo "$RESPONSE" | jq -e '.detail' >/dev/null 2>&1; then
-            echo "❌ Webshare API Error Response:"
-            echo "$RESPONSE"
+          if [ -z "$PROXY_LINE" ]; then
+            echo "ERROR: No proxy found in Webshare proxy list."
             exit 1
           fi
 
-          echo "$RESPONSE" > proxies.json
-          PROXY_LINE=$(jq -r '.results[0] | "\(.proxy_address),\(.port),\(.username),\(.password)"' proxies.json 2>/dev/null || echo "")
+          IP=$(echo "$PROXY_LINE" | cut -d: -f1)
+          PORT=$(echo "$PROXY_LINE" | cut -d: -f2)
+          PROXY_USER=$(echo "$PROXY_LINE" | cut -d: -f3)
+          PROXY_PASS=$(echo "$PROXY_LINE" | cut -d: -f4)
 
-          if [ -z "$PROXY_LINE" ] || [ "$PROXY_LINE" = "null,null,null,null" ]; then
-            echo "❌ ERROR: No proxy found in Webshare response. Full response below:"
-            echo "$RESPONSE"
+          if [ -z "$IP" ] || [ -z "$PORT" ] || [ -z "$PROXY_USER" ] || [ -z "$PROXY_PASS" ]; then
+            echo "ERROR: Proxy line format invalid. Expected IP:PORT:USERNAME:PASSWORD"
+            echo "Selected line is invalid, hidden for security."
             exit 1
           fi
-
-          IP=$(echo "$PROXY_LINE" | cut -d',' -f1)
-          PORT=$(echo "$PROXY_LINE" | cut -d',' -f2)
-          PROXY_USER=$(echo "$PROXY_LINE" | cut -d',' -f3)
-          PROXY_PASS=$(echo "$PROXY_LINE" | cut -d',' -f4)
 
           HTTP_PROXY_VALUE="http://${PROXY_USER}:${PROXY_PASS}@${IP}:${PORT}"
 
@@ -89,9 +73,15 @@ jobs:
         run: |
           echo "Direct IP:"
           curl --noproxy '*' -s https://api.ipify.org || true
-          echo -e "\nProxy IP:"
-          curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
-          echo -e "\n"
+          echo
+
+          if [ -n "$HTTP_PROXY" ]; then
+            echo "Proxy IP:"
+            curl -s -x "$HTTP_PROXY" https://api.ipify.org || true
+            echo
+          else
+            echo "HTTP_PROXY is empty."
+          fi
 
       - name: Run Renew Script
         env:
@@ -99,14 +89,11 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
-          mkdir -p screenshots
-          # 重新启用并配置 xvfb-run 虚拟桌面，专门配合你的 launchChrome 逻辑
           xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
 
       - name: Upload Screenshots
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: screenshots/
-          if-no-files-found: ignore
